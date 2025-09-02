@@ -16,6 +16,7 @@ struct Player {
     float radius;
     int speed;
     int shotgunLevel;
+    int shotgunTimer; // ▼ 修正: ショットガン効果の残り時間を追加
 };
 
 // 弾
@@ -65,6 +66,14 @@ enum Scene {
 
 int scene = TITLE;
 
+// 2つのアイテム間の距離を計算する関数
+bool IsTooClose(const Vector2& pos1, float radius1, const Vector2& pos2, float radius2) {
+    float dx = pos1.x - pos2.x;
+    float dy = pos1.y - pos2.y;
+    float distance = sqrtf(dx * dx + dy * dy);
+    return distance < (radius1 + radius2 + 50.0f);
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     const int kWindowWidth = 1280;
@@ -78,7 +87,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     char preKeys[256] = { 0 };
 
     // プレイヤー初期化
-    Player player = { {kWindowWidth / 2.0f, kWindowHeight - 100.0f}, 20.0f, 8, 0 };
+    Player player = { {kWindowWidth / 2.0f, kWindowHeight - 100.0f}, 20.0f, 8, 0, 0 }; // ▼ 修正: shotgunTimerを0で初期化
 
     // 弾リスト
     std::vector<Bullet> bullets;
@@ -139,12 +148,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 defaultShotCooldown = 15;
                 powerUpLevel = 0;
                 player.shotgunLevel = 0;
+                player.shotgunTimer = 0; // ▼ 修正: shotgunTimerも初期化
             }
             break;
 
         case GAME: {
             gameTimer++;
-
             if (gameTimer >= totalTime) {
                 scene = CLEAR;
             }
@@ -154,22 +163,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
             float minPlayerX = minX + player.radius;
             float maxPlayerX = maxX - player.radius;
-
             if (player.pos.x < minPlayerX) player.pos.x = minPlayerX;
             if (player.pos.x > maxPlayerX) player.pos.x = maxPlayerX;
 
             if (keys[DIK_SPACE] && shotCooldown == 0) {
-                // ▼ 修正: shotgunLevelに応じて弾の数を動的に変更
                 if (player.shotgunLevel == 0) {
                     bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {0.0f, -1.0f}, true });
                 } else {
                     float angleIncrement = 0.3f;
-                    bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {0.0f, -1.0f}, true }); // 中央の弾
-
+                    bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {0.0f, -1.0f}, true });
                     for (int i = 1; i <= player.shotgunLevel; ++i) {
                         float angle = angleIncrement * i;
-                        bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {angle, -1.0f}, true }); // 右側の弾
-                        bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {-angle, -1.0f}, true }); // 左側の弾
+                        bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {angle, -1.0f}, true });
+                        bullets.push_back({ {player.pos.x, player.pos.y}, 8.0f, 15, {-angle, -1.0f}, true });
                     }
                 }
                 shotCooldown = defaultShotCooldown;
@@ -193,14 +199,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 int safeRange = range - (int)(player.radius * 2);
                 int timeInSeconds = gameTimer / framePerSecond;
                 int enemyInitialHP = 0;
-
                 if (timeInSeconds <= 10) {
                     enemyInitialHP = 1;
                 } else {
                     int hpIncrease = (timeInSeconds / 10) * 5;
                     enemyInitialHP = 1 + hpIncrease;
                 }
-
                 Enemy e = { {(float)(safeMinX + rand() % safeRange), 0.0f}, enemyRadius, 2, true, enemyInitialHP };
                 enemies.push_back(e);
             }
@@ -219,15 +223,67 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             powerUpSpawnTimer++;
             if (powerUpSpawnTimer >= 5 * framePerSecond) {
                 powerUpSpawnTimer = 0;
-                PowerUp p = { {(float)(minX + rand() % range), 0.0f}, 15.0f, 3, true, 3 };
-                powerUps.push_back(p);
+                PowerUp p = { {0.0f, 0.0f}, 15.0f, 3, true, 3 };
+                bool spawnable = false;
+                int maxAttempts = 10;
+                for (int i = 0; i < maxAttempts; ++i) {
+                    float newX = (float)(minX + rand() % range);
+                    p.pos = { newX, 0.0f };
+                    spawnable = true;
+                    for (const auto& existingP : powerUps) {
+                        if (IsTooClose(p.pos, p.radius, existingP.pos, existingP.radius)) {
+                            spawnable = false;
+                            break;
+                        }
+                    }
+                    if (spawnable) {
+                        for (const auto& existingS : shotgunPowerUps) {
+                            if (IsTooClose(p.pos, p.radius, existingS.pos, existingS.radius)) {
+                                spawnable = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (spawnable) {
+                        break;
+                    }
+                }
+                if (spawnable) {
+                    powerUps.push_back(p);
+                }
             }
 
             shotgunPowerUpSpawnTimer++;
             if (shotgunPowerUpSpawnTimer >= 10 * framePerSecond) {
                 shotgunPowerUpSpawnTimer = 0;
-                ShotgunPowerUp s = { {(float)(minX + rand() % range), 0.0f}, 15.0f, 3, true, 5 };
-                shotgunPowerUps.push_back(s);
+                ShotgunPowerUp s = { {0.0f, 0.0f}, 15.0f, 3, true, 5 };
+                bool spawnable = false;
+                int maxAttempts = 10;
+                for (int i = 0; i < maxAttempts; ++i) {
+                    float newX = (float)(minX + rand() % range);
+                    s.pos = { newX, 0.0f };
+                    spawnable = true;
+                    for (const auto& existingP : powerUps) {
+                        if (IsTooClose(s.pos, s.radius, existingP.pos, existingP.radius)) {
+                            spawnable = false;
+                            break;
+                        }
+                    }
+                    if (spawnable) {
+                        for (const auto& existingS : shotgunPowerUps) {
+                            if (IsTooClose(s.pos, s.radius, existingS.pos, existingS.radius)) {
+                                spawnable = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (spawnable) {
+                        break;
+                    }
+                }
+                if (spawnable) {
+                    shotgunPowerUps.push_back(s);
+                }
             }
 
             for (auto& p : powerUps) {
@@ -244,7 +300,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
             for (auto& b : bullets) {
                 if (!b.isAlive) continue;
-
                 for (auto& e : enemies) {
                     if (!e.isAlive) continue;
                     float dx = b.pos.x - e.pos.x;
@@ -256,7 +311,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                         if (e.hp <= 0) e.isAlive = false;
                     }
                 }
-
                 for (auto& p : powerUps) {
                     if (!p.isAlive) continue;
                     float dx = b.pos.x - p.pos.x;
@@ -275,7 +329,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                         }
                     }
                 }
-
                 for (auto& s : shotgunPowerUps) {
                     if (!s.isAlive) continue;
                     float dx = b.pos.x - s.pos.x;
@@ -287,10 +340,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                         if (s.hp <= 0) {
                             s.isAlive = false;
                             player.shotgunLevel++;
+                            player.shotgunTimer = 6 * framePerSecond; // ▼ 修正: ショットガン効果時間を設定
                         }
                     }
                 }
             }
+
+            // ▼ 修正: ショットガンタイマーの更新
+            if (player.shotgunTimer > 0) {
+                player.shotgunTimer--;
+                if (player.shotgunTimer <= 0) {
+                    player.shotgunLevel = 0;
+                }
+            }
+            // ▲ 修正終わり
 
         } break;
 
@@ -332,35 +395,29 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                     Novice::DrawEllipse((int)b.pos.x, (int)b.pos.y, (int)b.radius, (int)b.radius, 0.0f, RED, kFillModeSolid);
                 }
             }
-
             for (auto& e : enemies) {
                 if (e.isAlive) {
                     Novice::DrawEllipse((int)e.pos.x, (int)e.pos.y, (int)e.radius, (int)e.radius, 0.0f, RED, kFillModeSolid);
                     Novice::ScreenPrintf((int)e.pos.x - 10, (int)e.pos.y - 30, "HP:%d", e.hp);
                 }
             }
-
             for (auto& p : powerUps) {
                 if (p.isAlive) {
                     Novice::DrawEllipse((int)p.pos.x, (int)p.pos.y, (int)p.radius, (int)p.radius, 0.0f, WHITE, kFillModeSolid);
                     Novice::ScreenPrintf((int)p.pos.x - 10, (int)p.pos.y - 30, "HP:%d", p.hp);
                 }
             }
-
             for (auto& s : shotgunPowerUps) {
                 if (s.isAlive) {
-                    Novice::DrawEllipse((int)s.pos.x, (int)s.pos.y, (int)s.radius, (int)s.radius, 0.0f, WHITE
-                        
-                        , kFillModeSolid);
+                    Novice::DrawEllipse((int)s.pos.x, (int)s.pos.y, (int)s.radius, (int)s.radius, 0.0f, WHITE, kFillModeSolid);
                     Novice::ScreenPrintf((int)s.pos.x - 10, (int)s.pos.y - 30, "HP:%d", s.hp);
                 }
             }
-
             Novice::ScreenPrintf(20, 20, "Lives: %d", lives);
             Novice::ScreenPrintf(20, 40, "Time: %d:%02d", elapsedMinutes, elapsedSeconds);
             Novice::ScreenPrintf(20, 60, "Shot Speed Level: %d", powerUpLevel);
             Novice::ScreenPrintf(20, 80, "Shotgun Level: %d", player.shotgunLevel);
-
+            Novice::ScreenPrintf(20, 100, "Shotgun Timer: %d", player.shotgunTimer / framePerSecond); // ▼ 修正: ショットガン効果時間を表示
             Novice::DrawBox(0, 0, minX, kWindowHeight, 0.0f, BLACK, kFillModeSolid);
             Novice::DrawBox(maxX + 1, 0, kWindowWidth - maxX, kWindowHeight, 0.0f, BLACK, kFillModeSolid);
             break;
@@ -378,12 +435,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
 
         Novice::EndFrame();
-
         if (preKeys[DIK_ESCAPE] == 0 && keys[DIK_ESCAPE] != 0) {
             break;
         }
     }
-
     Novice::Finalize();
     return 0;
 }
